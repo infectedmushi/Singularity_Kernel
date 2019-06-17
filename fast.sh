@@ -7,7 +7,7 @@ git submodule init
 git submodule update
 #make O=out mrproper
 #rm -rf out
-export PATH="/mnt/Hawai/toolchains/proton-clang-15/bin:$PATH"
+export PATH="/mnt/Hawai/toolchains/proton-clang-16/bin:$PATH"
 export USE_CCACHE=1
 export ARCH=arm64
 DTBIMAGE="dtb"
