@@ -12,7 +12,6 @@
 #include <linux/types.h>
 #include <linux/module.h>
 #include <linux/qrtr.h>
-#include <linux/ipc_logging.h>
 #include <linux/atomic.h>
 #include <linux/err.h>
 #include <linux/ip.h>
@@ -21,23 +20,20 @@
 #include <linux/version.h>
 #include <net/tcp.h>
 #include <net/oplus_nwpower.h>
-#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
-#include <soc/oplus/oplus_wakelock_profiler.h>
-#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
 
 static void tcp_output_hook_work_callback(struct work_struct *work);
 static void tcp_input_hook_work_callback(struct work_struct *work);
 static void tcp_output_tcpsynretrans_hook_work_callback(struct work_struct *work);
 static void tcp_input_tcpsynretrans_hook_work_callback(struct work_struct *work);
 
-static int nwpower_send_to_user(int msg_type,char *msg_data, int msg_len);
+static int nwpower_send_to_user(int msg_type, char *msg_data, int msg_len);
 
-//Add for feature switch
+/*Add for feature switch*/
 static atomic_t qrtr_wakeup_hook_boot = ATOMIC_INIT(0);
 static atomic_t ipa_wakeup_hook_boot = ATOMIC_INIT(0);
 static atomic_t tcpsynretrans_hook_boot = ATOMIC_INIT(0);
 
-//Add for qmi wakeup msg
+/*Add for qmi wakeup msg*/
 #define GLINK_MODEM_NODE_ID    0x3
 #define GLINK_ADSP_NODE_ID     0x5
 #define GLINK_CDSP_NODE_ID     0xa
@@ -50,10 +46,10 @@ atomic_t qrtr_first_msg = ATOMIC_INIT(0);
 u64 oplus_nw_wakeup[OPLUS_NW_WAKEUP_SUM] = {0};
 static u64 service_wakeup_times[OPLUS_MAX_QRTR_SERVICE_LEN][4] = {{0}};
 
-//Add for ipa wakeup msg
+/*Add for ipa wakeup msg*/
 #define OPLUS_MAX_RECORD_IP_LEN             60
-#define OPLUS_TRANSMISSION_INTERVAL         3 * 1000//3s
-#define OPLUS_TCP_RETRANSMISSION_INTERVAL   1 * 1000//1s
+#define OPLUS_TRANSMISSION_INTERVAL         3 * 1000
+#define OPLUS_TCP_RETRANSMISSION_INTERVAL   1 * 1000
 #define OPLUS_MAX_RECORD_APP_WAKEUP_LEN     100
 
 struct tcp_hook_struct {
@@ -75,7 +71,7 @@ static struct tcp_hook_simple_struct app_wakeup_monitor_list = {
 };
 
 static bool tcp_input_sch_work = false;
-static atomic_t tcp_is_input = ATOMIC_INIT(0);//1=v4_input,2=v6_input,3=output,0=default
+static atomic_t tcp_is_input = ATOMIC_INIT(0);/*1=v4_input,2=v6_input,3=output,0=default*/
 static struct timespec tcp_last_transmission_stamp;
 static struct tcp_hook_struct tcp_output_list = {
 	.is_ipv6 = false,
@@ -98,7 +94,7 @@ DECLARE_WORK(tcp_input_hook_work, tcp_input_hook_work_callback);
 DECLARE_WORK(tcp_output_tcpsynretrans_hook_work, tcp_output_tcpsynretrans_hook_work_callback);
 DECLARE_WORK(tcp_input_tcpsynretrans_hook_work, tcp_input_tcpsynretrans_hook_work_callback);
 
-//Add for modem eap buffer
+/*Add for modem eap buffer*/
 u64 oplus_mdaci_nw_wakeup[OPLUS_NW_WAKEUP_SUM] = {0};
 static u64 mdaci_service_wakeup_times[OPLUS_MAX_QRTR_SERVICE_LEN][4] = {{0}};
 static struct tcp_hook_struct mdaci_tcp_output_list = {
@@ -118,7 +114,7 @@ static struct tcp_hook_struct mdaci_tcp_input_retrans_list = {
 	.set = {0},
 };
 
-//Add for Netlink
+/*Add for Netlink*/
 enum{
 	NW_POWER_ANDROID_PID                   = 0x11,
 	NW_POWER_BOOT_MONITOR                  = 0x12,
@@ -138,7 +134,7 @@ static DEFINE_MUTEX(netlink_mutex);
 static u32 oplus_nwpower_pid = 0;
 static struct sock *oplus_nwpower_sock;
 
-//Add for unsl wakeup msg
+/*Add for unsl wakeup msg*/
 #define KERNEL_UNSL_MONITOR_LEN 7
 static u64 wakeup_unsl_msg[KERNEL_UNSL_MONITOR_LEN] = {0};
 
@@ -150,10 +146,6 @@ static u32 blacklist_uid[KERNEL_UNSL_APP_WAKEUP_LEN] = {0};
 #define KERNEL_UNSL_BLACK_REJECT_LEN 201
 static u32 record_blacklist_reject_index = 0;
 static u64 blacklist_reject_uid[KERNEL_UNSL_BLACK_REJECT_LEN] = {0};
-
-/*Add for qrtr bts info*/
-#define BTS_BUFFER_SIZE (80)
-static char bts_net_wakeup_buffer[BTS_BUFFER_SIZE+1];
 
 /*Add for mdaci wakeup apps*/
 static struct tcp_hook_simple_struct mdaci_app_wakeup_monitor_list = {
@@ -181,7 +173,7 @@ static uid_t get_uid_from_sock(const struct sock *sk)
 	return sk_uid;
 }
 
-static void nwpower_unsl_blacklist_reject() {
+static void nwpower_unsl_blacklist_reject(void) {
 	if (record_blacklist_reject_index > 0) {
 		blacklist_reject_uid[0] = record_blacklist_reject_index;
 		nwpower_send_to_user(NW_POWER_REPORT_BLACK_REJECT, (char*)blacklist_reject_uid, sizeof(blacklist_reject_uid));
@@ -194,7 +186,7 @@ extern bool oplus_check_socket_in_blacklist(int is_input, struct socket *sock) {
 	int i = 0;
 	uid_t uid = 0;
 	struct timespec now_ts;
-	if (blacklist_len > 0 && sock && sock->sk && (sock->sk->sk_family == 2 || sock->sk->sk_family == 10)){
+	if (blacklist_len > 0 && sock && sock->sk && (sock->sk->sk_family == 2 || sock->sk->sk_family == 10)) {
 		uid = get_uid_from_sock(sock->sk);
 		if(uid == 0) {
 			return false;
@@ -243,7 +235,6 @@ extern void oplus_match_modem_wakeup() {
 	atomic_set(&qrtr_first_msg, 1);
 	oplus_nw_wakeup[OPLUS_NW_MPSS]++;
 	oplus_mdaci_nw_wakeup[OPLUS_NW_MPSS]++;
-	snprintf(bts_net_wakeup_buffer, BTS_BUFFER_SIZE, "qmi");
 }
 
 extern void oplus_match_wlan_wakeup() {
@@ -258,11 +249,9 @@ static void match_qrtr_new_service_port(int id, int port, u64 qrtr[][4]) {
 			qrtr[i][0] = 1;
 			qrtr[i][1] = id;
 			qrtr[i][2] = port;
-			//printk("[oplus_nwpower] QrtrNewService[%d]: ServiceID: %d, PortID: %d", i, id, port);
 			break;
 		} else {
 			if (qrtr[i][1] == id && qrtr[i][2] == port) {
-				//printk("[oplus_nwpower] QrtrNewService[%d]: Ignore.");
 				break;
 			}
 		}
@@ -274,13 +263,13 @@ static void match_qrtr_del_service_port(int id, u64 qrtr[][4]) {
 	for (i = 0; i < OPLUS_MAX_QRTR_SERVICE_LEN; ++i) {
 		if (qrtr[i][0] == 1 && qrtr[i][1] == id) {
 			qrtr[i][0] = 0;
-			//printk("[oplus_nwpower] QrtrDelService[%d]: ServiceID: %d", i, id);
 			break;
 		}
 	}
 }
 
 extern void oplus_match_qrtr_service_port(int type, int id, int port) {
+	/*
 	if (type == QRTR_TYPE_NEW_SERVER) {
 		match_qrtr_new_service_port(id, port, service_wakeup_times);
 		match_qrtr_new_service_port(id, port, mdaci_service_wakeup_times);
@@ -288,26 +277,11 @@ extern void oplus_match_qrtr_service_port(int type, int id, int port) {
 		match_qrtr_del_service_port(id, service_wakeup_times);
 		match_qrtr_del_service_port(id, mdaci_service_wakeup_times);
 	}
+	*/
 }
 
-void bts_net_clear(void)
-{
-	memset(bts_net_wakeup_buffer, 0, sizeof(bts_net_wakeup_buffer));
-}
-bool bts_net_exist(void)
-{
-        int platform_id = get_cached_platform_id();
-        if (platform_id == LAGOON) {
-                bts_net_clear();
-        }
-	return bts_net_wakeup_buffer[0] == 0 ? false : true;
-}
-ssize_t bts_net_fill(char * desc, ssize_t size)
-{
-	return scnprintf(desc, size > BTS_BUFFER_SIZE ? BTS_BUFFER_SIZE : size, "999 %s\n", bts_net_wakeup_buffer);
-}
-
-static void __oplus_match_qrtr_wakeup(int src_node, int src_port, int dst_port, unsigned int arg1, unsigned int arg2, u64 qrtr[][4], u64 wakeup[OPLUS_NW_WAKEUP_SUM], bool prt) {
+static void __oplus_match_qrtr_wakeup(int src_node, int src_port, int dst_port,
+	unsigned int arg1, unsigned int arg2, u64 qrtr[][4], u64 wakeup[OPLUS_NW_WAKEUP_SUM], bool prt) {
 	int i;
 	int repeat[4] = {0};
 	int repeat_index = 0;
@@ -338,7 +312,6 @@ static void __oplus_match_qrtr_wakeup(int src_node, int src_port, int dst_port, 
 		wakeup[OPLUS_NW_QRTR]++;
 		if (src_node == GLINK_MODEM_NODE_ID) {
 			wakeup[OPLUS_NW_MD]++;
-
 		} else if (src_node == GLINK_ADSP_NODE_ID) {
 		} else if (src_node == GLINK_CDSP_NODE_ID) {
 		} else if (src_node == GLINK_SLPI_NODE_ID) {
@@ -353,7 +326,7 @@ extern void oplus_match_qrtr_wakeup(int src_node, int src_port, int dst_port, un
 	atomic_set(&qrtr_first_msg, 0);
 }
 
-extern void oplus_update_qrtr_flag(int flag){
+extern void oplus_update_qrtr_flag(int flag) {
 	if (atomic_read(&qrtr_wakeup_hook_boot) == 1) {
 		atomic_set(&qrtr_first_msg, flag);
 	}
@@ -403,7 +376,8 @@ extern void oplus_match_ipa_ip_wakeup(int type, struct sk_buff *skb) {
 	if (atomic_read(&ipa_wakeup_hook_boot) == 1) {
 		if (atomic_read(&tcp_is_input) == 0) {
 			now_ts = current_kernel_time();
-			if (((now_ts.tv_sec * 1000 + now_ts.tv_nsec / 1000000) - (tcp_last_transmission_stamp.tv_sec * 1000 + tcp_last_transmission_stamp.tv_nsec / 1000000)) > OPLUS_TRANSMISSION_INTERVAL) {
+			if (((now_ts.tv_sec * 1000 + now_ts.tv_nsec / 1000000) - (tcp_last_transmission_stamp.tv_sec * 1000 + tcp_last_transmission_stamp.tv_nsec / 1000000))
+				> OPLUS_TRANSMISSION_INTERVAL) {
 				if (type == OPLUS_TCP_TYPE_V4) {
 					tmp_v4iph = ip_hdr(skb);
 					atomic_set(&tcp_is_input, OPLUS_TCP_TYPE_V4);
@@ -460,7 +434,8 @@ extern void oplus_match_tcp_output(struct sock *sk) {
 	if (atomic_read(&ipa_wakeup_hook_boot) == 1) {
 		if (atomic_read(&tcp_is_input) == 0) {
 			now_ts = current_kernel_time();
-			if (((now_ts.tv_sec * 1000 + now_ts.tv_nsec / 1000000) - (tcp_last_transmission_stamp.tv_sec * 1000 + tcp_last_transmission_stamp.tv_nsec / 1000000)) > OPLUS_TRANSMISSION_INTERVAL) {
+			if (((now_ts.tv_sec * 1000 + now_ts.tv_nsec / 1000000) - (tcp_last_transmission_stamp.tv_sec * 1000 + tcp_last_transmission_stamp.tv_nsec / 1000000))
+				> OPLUS_TRANSMISSION_INTERVAL) {
 				atomic_set(&tcp_is_input, 3);
 				if (sk->sk_v6_daddr.s6_addr32[0] == 0 && sk->sk_v6_daddr.s6_addr32[1] == 0) {
 					tcp_output_list.ipv4_addr = sk->sk_daddr;
@@ -547,12 +522,10 @@ static void tcp_hook_insert_sort(struct tcp_hook_struct *pval) {
 	int j;
 	u64 count = 0;
 	u64 temp_sort[3] = {0};
-	//Insert sort
 	for (i = 1; i < OPLUS_MAX_RECORD_IP_LEN; ++i) {
 		temp_sort[0] = pval->set[3*i];
 		temp_sort[1] = pval->set[3*i+1];
 		temp_sort[2] = pval->set[3*i+2];
-		//If IPv4
 		if (temp_sort[0] == 0 && temp_sort[1] == 0 && temp_sort[2] != 0) {
 			count = (temp_sort[2] & 0xFFFC000000000000) >> 50;
 		} else {
@@ -560,7 +533,7 @@ static void tcp_hook_insert_sort(struct tcp_hook_struct *pval) {
 		}
 		j = i - 1;
 		while (j >= 0) {
-			if (pval->set[3*j] == 0 && pval->set[3*j+1] == 0 && pval->set[3*j+2] != 0) {
+			if ((pval->set[3*j] == 0) && (pval->set[3*j+1] == 0) && (pval->set[3*j+2] != 0)) {
 				if (count > (pval->set[3*j+2] & 0xFFFC000000000000) >> 50) {
 					pval->set[3*(j+1)] = pval->set[3*j];
 					pval->set[3*(j+1)+1] = pval->set[3*j+1];
@@ -668,13 +641,12 @@ static bool tcp_monitor_check_uid_in_whitelist(int uid) {
 	return true;
 }
 
-static void nwpower_unsl_app_wakeup()
+static void nwpower_unsl_app_wakeup(void)
 {
 	nwpower_send_to_user(NW_POWER_REPORT_APP_WAKEUP, (char*)app_wakeup_monitor_list.set, sizeof(app_wakeup_monitor_list.set));
 	app_wakeup_monitor_list.count = 0;
 	memset(app_wakeup_monitor_list.set, 0x0, sizeof(app_wakeup_monitor_list.set));
 }
-
 
 static void app_wakeup_monitor(struct tcp_hook_simple_struct *pval, bool is_block, bool is_input, int pid, int uid) {
 	struct timespec now_ts = current_kernel_time();
@@ -708,12 +680,10 @@ static void tcp_output_hook_work_callback(struct work_struct *work) {
 		printk("[oplus_nwpower] IPAOutputWakeup: [%ld,****], %d, %d, %d",
 			tcp_output_list.ipv6_addr1,
 			tcp_output_list.pid, tcp_output_list.uid, tcp_output_list.set[3*i+2] & 0xFFFFFFFF);
-			snprintf(bts_net_wakeup_buffer, BTS_BUFFER_SIZE, "ipa");
 	} else {
 		printk("[oplus_nwpower] IPAOutputWakeup: %#X, %d, %d, %d",
 			tcp_output_list.ipv4_addr & 0xFFFFFF, tcp_output_list.pid, tcp_output_list.uid,
 			(tcp_output_list.set[3*i+2] & 0xFFFC000000000000) >> 50);
-			snprintf(bts_net_wakeup_buffer, BTS_BUFFER_SIZE, "ipa");
 	}
 	atomic_set(&tcp_is_input, 0);
 }
@@ -723,19 +693,14 @@ static void tcp_input_hook_work_callback(struct work_struct *work) {
 	match_tcp_hook(&mdaci_tcp_input_list);
 	app_wakeup_monitor(&app_wakeup_monitor_list, false, true, tcp_input_list.pid, tcp_input_list.uid);
 	app_wakeup_monitor(&mdaci_app_wakeup_monitor_list, false, true, tcp_input_list.pid, tcp_input_list.uid);
-	#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
-	wakeup_reasons_statics(IRQ_NAME_MODEM_IPA, WS_CNT_MODEM);
-	#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
 	if (tcp_input_list.is_ipv6) {
 		printk("[oplus_nwpower] IPAInputWakeup: [%ld,****], %d, %d, %d",
 			tcp_input_list.ipv6_addr1,
 			tcp_input_list.pid, tcp_input_list.uid, tcp_input_list.set[3*i+2] & 0xFFFFFFFF);
-			snprintf(bts_net_wakeup_buffer, BTS_BUFFER_SIZE, "ipa");
 	} else {
 		printk("[oplus_nwpower] IPAInputWakeup: %#X, %d, %d, %d",
 			tcp_input_list.ipv4_addr & 0xFFFFFF, tcp_input_list.pid, tcp_input_list.uid,
 			(tcp_input_list.set[3*i+2] & 0xFFFC000000000000) >> 50);
-			snprintf(bts_net_wakeup_buffer, BTS_BUFFER_SIZE, "ipa");
 	}
 	atomic_set(&tcp_is_input, 0);
 }
@@ -782,7 +747,7 @@ static int print_tcp_wakeup(const char *type, struct tcp_hook_struct *pval, bool
 	u32 tcp_wakeup_times = 0;
 	tcp_hook_insert_sort(pval);
 	for (i = 0; i < 5;++i) {
-		if (pval->set[3*i] == 0 && pval->set[3*i+1] == 0 && pval->set[3*i+2] != 0) {
+		if ((pval->set[3*i] == 0) && (pval->set[3*i+1] == 0) && (pval->set[3*i+2] != 0)) {
 			count = (pval->set[3*i+2] & 0xFFFC000000000000) >> 50;
 			if (prt && count > 0) {
 				printk("[oplus_nwpower] IPA%sMAX[%d]: %#X, %d, %d",
@@ -799,7 +764,7 @@ static int print_tcp_wakeup(const char *type, struct tcp_hook_struct *pval, bool
 		}
 	}
 	for (i = 0; i < OPLUS_MAX_RECORD_IP_LEN;++i) {
-		if (pval->set[3*i] == 0 && pval->set[3*i+1] == 0 && pval->set[3*i+2] != 0) {
+		if ((pval->set[3*i] == 0) && (pval->set[3*i+1] == 0) && (pval->set[3*i+2] != 0)) {
 			count = (pval->set[3*i+2] & 0xFFFC000000000000) >> 50;
 		} else {
 			count = pval->set[3*i+2] & 0xFFFFFFFF;
@@ -811,7 +776,8 @@ static int print_tcp_wakeup(const char *type, struct tcp_hook_struct *pval, bool
 	return tcp_wakeup_times;
 }
 
-static void print_ipa_wakeup(bool unsl, struct tcp_hook_struct *ptcp_in, struct tcp_hook_struct *ptcp_out, struct tcp_hook_struct *ptcp_re_in, struct tcp_hook_struct *ptcp_re_out, u64 wakeup[OPLUS_NW_WAKEUP_SUM], bool prt) {
+static void print_ipa_wakeup(bool unsl, struct tcp_hook_struct *ptcp_in, struct tcp_hook_struct *ptcp_out,
+	struct tcp_hook_struct *ptcp_re_in, struct tcp_hook_struct *ptcp_re_out, u64 wakeup[OPLUS_NW_WAKEUP_SUM], bool prt) {
 	wakeup[OPLUS_NW_TCP_IN] = print_tcp_wakeup("Input", ptcp_in, prt);
 	wakeup[OPLUS_NW_TCP_OUT] = print_tcp_wakeup("Output", ptcp_out, prt);
 	wakeup[OPLUS_NW_TCP_RE_IN] = print_tcp_wakeup("InputRetrans", ptcp_re_in, prt);
@@ -847,10 +813,9 @@ static void reset_count(u64 qrtr[][4], struct tcp_hook_struct *ptcp_in, struct t
 	for (i = 0; i < OPLUS_NW_WAKEUP_SUM; ++i) {
 		wakeup[i] = 0;
 	}
-
 }
 
-static void nwpower_hook_on() {
+static void nwpower_hook_on(void) {
 	atomic_set(&qrtr_wakeup_hook_boot, 1);
 	atomic_set(&ipa_wakeup_hook_boot, 1);
 	atomic_set(&tcpsynretrans_hook_boot, 1);
@@ -871,7 +836,7 @@ static void nwpower_hook_off(bool unsl) {
 	}
 }
 
-static void nwpower_unsl_mdaci() {
+static void nwpower_unsl_mdaci(void) {
 	print_qrtr_wakeup(true, mdaci_service_wakeup_times, oplus_mdaci_nw_wakeup, true);
 	print_ipa_wakeup(true, &mdaci_tcp_input_list, &mdaci_tcp_output_list,
 					&mdaci_tcp_input_retrans_list, &mdaci_tcp_output_retrans_list, oplus_mdaci_nw_wakeup, true);
@@ -884,7 +849,7 @@ static void nwpower_unsl_mdaci() {
 	memset(mdaci_app_wakeup_monitor_list.set, 0x0, sizeof(mdaci_app_wakeup_monitor_list.set));
 }
 
-static int nwpower_send_to_user(int msg_type,char *msg_data, int msg_len) {
+static int nwpower_send_to_user(int msg_type, char *msg_data, int msg_len) {
 	int ret = 0;
 	struct sk_buff *skb;
 	struct nlmsghdr *nlh;
@@ -911,7 +876,7 @@ static int nwpower_send_to_user(int msg_type,char *msg_data, int msg_len) {
 	NETLINK_CB(skb).dst_group = 0;
 	ret = netlink_unicast(oplus_nwpower_sock, skb, oplus_nwpower_pid, MSG_DONTWAIT);
 	if(ret < 0) {
-		printk(KERN_ERR "[oplus_nwpower] netlink: netlink_unicast failed, ret = %d.\n",ret);
+		printk(KERN_ERR "[oplus_nwpower] netlink: netlink_unicast failed, ret = %d.\n", ret);
 		return -4;
 	}
 	return 0;
