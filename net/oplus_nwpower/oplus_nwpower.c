@@ -20,32 +20,10 @@
 #include <linux/netlink.h>
 #include <linux/version.h>
 #include <net/tcp.h>
-#if defined(OPLUS_FEATURE_POWERINFO_STANDBY) && defined(CONFIG_OPLUS_WAKELOCK_PROFILER)
-#endif
-
-#define OPLUS_TCP_TYPE_V4               1
-#define OPLUS_TCP_TYPE_V6               2
-#define OPLUS_NW_WAKEUP_SUM                 8
-#define OPLUS_NW_MPSS                       0
-#define OPLUS_NW_QRTR                       1
-#define OPLUS_NW_MD                         2
-#define OPLUS_NW_WIFI                       3
-#define OPLUS_NW_TCP_IN                     4
-#define OPLUS_NW_TCP_OUT                    5
-#define OPLUS_NW_TCP_RE_IN                  6
-#define OPLUS_NW_TCP_RE_OUT                 7
-
-extern void (*match_modem_wakeup)(void);
-extern void (*match_wlan_wakeup)(void);
-extern void (*match_qrtr_service_port)(int type, int id, int port);
-extern void (*match_qrtr_wakeup)(int src_node, int src_port, int dst_port, unsigned int arg1, unsigned int arg2);
-extern void (*update_qrtr_flag)(int val);
-extern void (*match_ipa_ip_wakeup)(int type, struct sk_buff *skb);
-extern void (*match_ipa_tcp_wakeup)(int type, struct sock *sk);
-extern void (*ipa_schedule_work)(void);
-extern void (*match_tcp_input_retrans)(struct sock *sk);
-extern void (*match_tcp_output)(struct sock *sk);
-extern void (*match_tcp_output_retrans)(struct sock *sk);
+#include <net/oplus_nwpower.h>
+#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
+#include <soc/oplus/oplus_wakelock_profiler.h>
+#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
 
 static void tcp_output_hook_work_callback(struct work_struct *work);
 static void tcp_input_hook_work_callback(struct work_struct *work);
@@ -141,7 +119,6 @@ static struct tcp_hook_struct mdaci_tcp_input_retrans_list = {
 };
 
 //Add for Netlink
-#define NETLINK_OPLUS_NWPOWERSTATE	36	/*OPLUS NW PowerState*/
 enum{
 	NW_POWER_ANDROID_PID                   = 0x11,
 	NW_POWER_BOOT_MONITOR                  = 0x12,
@@ -174,19 +151,14 @@ static u32 blacklist_uid[KERNEL_UNSL_APP_WAKEUP_LEN] = {0};
 static u32 record_blacklist_reject_index = 0;
 static u64 blacklist_reject_uid[KERNEL_UNSL_BLACK_REJECT_LEN] = {0};
 
+/*Add for qrtr bts info*/
+#define BTS_BUFFER_SIZE (80)
+static char bts_net_wakeup_buffer[BTS_BUFFER_SIZE+1];
+
 /*Add for mdaci wakeup apps*/
 static struct tcp_hook_simple_struct mdaci_app_wakeup_monitor_list = {
 	.set = {0},
 };
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
-static struct timespec current_kernel_time(void)
-{
-	struct timespec64 ts64;
-	ktime_get_coarse_real_ts64(&ts64);
-	return timespec64_to_timespec(ts64);
-}
-#endif
 
 static uid_t get_uid_from_sock(const struct sock *sk)
 {
@@ -267,13 +239,14 @@ static int nwpower_set_blacklist_uids(struct nlmsghdr *nlh) {
 	return 0;
 }
 
-static void oplus_match_modem_wakeup(void) {
+extern void oplus_match_modem_wakeup(void) {
 	atomic_set(&qrtr_first_msg, 1);
 	oplus_nw_wakeup[OPLUS_NW_MPSS]++;
 	oplus_mdaci_nw_wakeup[OPLUS_NW_MPSS]++;
+	snprintf(bts_net_wakeup_buffer, BTS_BUFFER_SIZE, "qmi");
 }
 
-static void oplus_match_wlan_wakeup(void) {
+extern void oplus_match_wlan_wakeup(void) {
 	oplus_nw_wakeup[OPLUS_NW_WIFI]++;
 	oplus_mdaci_nw_wakeup[OPLUS_NW_WIFI]++;
 }
@@ -307,7 +280,7 @@ static void match_qrtr_del_service_port(int id, u64 qrtr[][4]) {
 	}
 }
 
-static void oplus_match_qrtr_service_port(int type, int id, int port) {
+extern void oplus_match_qrtr_service_port(int type, int id, int port) {
 	if (type == QRTR_TYPE_NEW_SERVER) {
 		match_qrtr_new_service_port(id, port, service_wakeup_times);
 		match_qrtr_new_service_port(id, port, mdaci_service_wakeup_times);
@@ -315,6 +288,23 @@ static void oplus_match_qrtr_service_port(int type, int id, int port) {
 		match_qrtr_del_service_port(id, service_wakeup_times);
 		match_qrtr_del_service_port(id, mdaci_service_wakeup_times);
 	}
+}
+
+void bts_net_clear(void)
+{
+	memset(bts_net_wakeup_buffer, 0, sizeof(bts_net_wakeup_buffer));
+}
+bool bts_net_exist(void)
+{
+        int platform_id = get_cached_platform_id();
+        if (platform_id == LAGOON) {
+                bts_net_clear();
+        }
+	return bts_net_wakeup_buffer[0] == 0 ? false : true;
+}
+ssize_t bts_net_fill(char * desc, ssize_t size)
+{
+	return scnprintf(desc, size > BTS_BUFFER_SIZE ? BTS_BUFFER_SIZE : size, "999 %s\n", bts_net_wakeup_buffer);
 }
 
 static void __oplus_match_qrtr_wakeup(int src_node, int src_port, int dst_port, unsigned int arg1, unsigned int arg2, u64 qrtr[][4], u64 wakeup[OPLUS_NW_WAKEUP_SUM], bool prt) {
@@ -357,13 +347,13 @@ static void __oplus_match_qrtr_wakeup(int src_node, int src_port, int dst_port, 
 	}
 }
 
-static void oplus_match_qrtr_wakeup(int src_node, int src_port, int dst_port, unsigned int arg1, unsigned int arg2) {
+extern void oplus_match_qrtr_wakeup(int src_node, int src_port, int dst_port, unsigned int arg1, unsigned int arg2) {
 	__oplus_match_qrtr_wakeup(src_node, src_port, dst_port, arg1, arg2, service_wakeup_times, oplus_nw_wakeup, true);
 	__oplus_match_qrtr_wakeup(src_node, src_port, dst_port, arg1, arg2, mdaci_service_wakeup_times, oplus_mdaci_nw_wakeup, false);
 	atomic_set(&qrtr_first_msg, 0);
 }
 
-static void oplus_update_qrtr_flag(int flag){
+extern void oplus_update_qrtr_flag(int flag){
 	if (atomic_read(&qrtr_wakeup_hook_boot) == 1) {
 		atomic_set(&qrtr_first_msg, flag);
 	}
@@ -405,7 +395,7 @@ static void print_qrtr_wakeup(bool unsl, u64 qrtr[][4], u64 wakeup[OPLUS_NW_WAKE
 			wakeup[OPLUS_NW_MPSS], wakeup[OPLUS_NW_QRTR], wakeup[OPLUS_NW_MD], wakeup[OPLUS_NW_WIFI]);
 }
 
-static void oplus_match_ipa_ip_wakeup(int type, struct sk_buff *skb) {
+extern void oplus_match_ipa_ip_wakeup(int type, struct sk_buff *skb) {
 	struct timespec now_ts;
 	struct iphdr *tmp_v4iph;
 	struct ipv6hdr *tmp_v6iph;
@@ -441,7 +431,7 @@ static void oplus_match_ipa_ip_wakeup(int type, struct sk_buff *skb) {
 	}
 }
 
-static void oplus_match_ipa_tcp_wakeup(int type, struct sock *sk) {
+extern void oplus_match_ipa_tcp_wakeup(int type, struct sock *sk) {
 	if (atomic_read(&ipa_wakeup_hook_boot) == 1) {
 		if (atomic_read(&tcp_is_input) == type && !tcp_input_sch_work) {
 			if (sk->sk_state != TCP_TIME_WAIT) {
@@ -458,14 +448,14 @@ static void oplus_match_ipa_tcp_wakeup(int type, struct sock *sk) {
 	}
 }
 
-static void oplus_ipa_schedule_work(void) {
+extern void oplus_ipa_schedule_work(void) {
 	if (atomic_read(&ipa_wakeup_hook_boot) == 1 && atomic_read(&tcp_is_input) == 1 && !tcp_input_sch_work) {
 		schedule_work(&tcp_input_hook_work);
 		tcp_input_sch_work = true;
 	}
 }
 
-static void oplus_match_tcp_output(struct sock *sk) {
+extern void oplus_match_tcp_output(struct sock *sk) {
 	struct timespec now_ts;
 	if (atomic_read(&ipa_wakeup_hook_boot) == 1) {
 		if (atomic_read(&tcp_is_input) == 0) {
@@ -498,7 +488,7 @@ static void oplus_match_tcp_output(struct sock *sk) {
 	}
 }
 
-static void oplus_match_tcp_input_retrans(struct sock *sk) {
+extern void oplus_match_tcp_input_retrans(struct sock *sk) {
 	struct timespec now_ts;
 	if (atomic_read(&tcpsynretrans_hook_boot) == 1) {
 		now_ts = current_kernel_time();
@@ -525,7 +515,7 @@ static void oplus_match_tcp_input_retrans(struct sock *sk) {
 	}
 }
 
-static void oplus_match_tcp_output_retrans(struct sock *sk) {
+extern void oplus_match_tcp_output_retrans(struct sock *sk) {
 	struct timespec now_ts;
 	if (atomic_read(&tcpsynretrans_hook_boot) == 1) {
 		now_ts = current_kernel_time();
@@ -699,6 +689,10 @@ static void app_wakeup_monitor(struct tcp_hook_simple_struct *pval, bool is_bloc
 			((u64)(whitelist & 0xFFFF) << 16) |
 			(0xFFFF);
 		pval->set[1+pval->count*3+2] = now_ts.tv_sec * 1000 + now_ts.tv_nsec / 1000000;
+		/*
+		printk("[oplus_nwpower] count:%d, block:%d, input:%d, pid:%d, uid:%d, stamp:%ld",
+			pval->set[0], block, input, pid, uid, pval->set[1+pval->count*3+2]);
+		*/
 		pval->set[0] = (++pval->count);
 	} else {
 		printk("[oplus_nwpower] warning! OPLUS_MAX_RECORD_APP_WAKEUP_LEN reached");
@@ -714,10 +708,12 @@ static void tcp_output_hook_work_callback(struct work_struct *work) {
 		printk("[oplus_nwpower] IPAOutputWakeup: [%ld,****], %d, %d, %d",
 			tcp_output_list.ipv6_addr1,
 			tcp_output_list.pid, tcp_output_list.uid, tcp_output_list.set[3*i+2] & 0xFFFFFFFF);
+			snprintf(bts_net_wakeup_buffer, BTS_BUFFER_SIZE, "ipa");
 	} else {
 		printk("[oplus_nwpower] IPAOutputWakeup: %#X, %d, %d, %d",
 			tcp_output_list.ipv4_addr & 0xFFFFFF, tcp_output_list.pid, tcp_output_list.uid,
 			(tcp_output_list.set[3*i+2] & 0xFFFC000000000000) >> 50);
+			snprintf(bts_net_wakeup_buffer, BTS_BUFFER_SIZE, "ipa");
 	}
 	atomic_set(&tcp_is_input, 0);
 }
@@ -728,15 +724,18 @@ static void tcp_input_hook_work_callback(struct work_struct *work) {
 	app_wakeup_monitor(&app_wakeup_monitor_list, false, true, tcp_input_list.pid, tcp_input_list.uid);
 	app_wakeup_monitor(&mdaci_app_wakeup_monitor_list, false, true, tcp_input_list.pid, tcp_input_list.uid);
 	#ifdef OPLUS_FEATURE_POWERINFO_STANDBY
+	wakeup_reasons_statics(IRQ_NAME_MODEM_IPA, WS_CNT_MODEM);
 	#endif /* OPLUS_FEATURE_POWERINFO_STANDBY */
 	if (tcp_input_list.is_ipv6) {
 		printk("[oplus_nwpower] IPAInputWakeup: [%ld,****], %d, %d, %d",
 			tcp_input_list.ipv6_addr1,
 			tcp_input_list.pid, tcp_input_list.uid, tcp_input_list.set[3*i+2] & 0xFFFFFFFF);
+			snprintf(bts_net_wakeup_buffer, BTS_BUFFER_SIZE, "ipa");
 	} else {
 		printk("[oplus_nwpower] IPAInputWakeup: %#X, %d, %d, %d",
 			tcp_input_list.ipv4_addr & 0xFFFFFF, tcp_input_list.pid, tcp_input_list.uid,
 			(tcp_input_list.set[3*i+2] & 0xFFFC000000000000) >> 50);
+			snprintf(bts_net_wakeup_buffer, BTS_BUFFER_SIZE, "ipa");
 	}
 	atomic_set(&tcp_is_input, 0);
 }
@@ -980,17 +979,6 @@ static void nwpower_netlink_exit(void) {
 static int __init nwpower_init(void) {
 	int ret = 0;
 	ret = nwpower_netlink_init();
-	match_modem_wakeup = oplus_match_modem_wakeup;
-	match_wlan_wakeup = oplus_match_wlan_wakeup;
-	match_qrtr_service_port = oplus_match_qrtr_service_port;
-	match_qrtr_wakeup = oplus_match_qrtr_wakeup;
-	update_qrtr_flag = oplus_update_qrtr_flag;
-	match_ipa_ip_wakeup = oplus_match_ipa_ip_wakeup;
-	match_ipa_tcp_wakeup = oplus_match_ipa_tcp_wakeup;
-	ipa_schedule_work = oplus_ipa_schedule_work;
-	match_tcp_input_retrans = oplus_match_tcp_input_retrans;
-	match_tcp_output = oplus_match_tcp_output;
-	match_tcp_output_retrans = oplus_match_tcp_output_retrans;
 	if (ret < 0) {
 		printk("[oplus_nwpower] netlink: failed to init netlink.\n");
 	} else {
@@ -1001,17 +989,6 @@ static int __init nwpower_init(void) {
 
 static void __exit nwpower_fini(void) {
 	nwpower_netlink_exit();
-	match_modem_wakeup = NULL;
-	match_wlan_wakeup = NULL;
-	match_qrtr_service_port = NULL;
-	match_qrtr_wakeup = NULL;
-	update_qrtr_flag = NULL;
-	match_ipa_ip_wakeup = NULL;
-	match_ipa_tcp_wakeup = NULL;
-	ipa_schedule_work = NULL;
-	match_tcp_input_retrans = NULL;
-	match_tcp_output = NULL;
-	match_tcp_output_retrans = NULL;
 }
 
 module_init(nwpower_init);
