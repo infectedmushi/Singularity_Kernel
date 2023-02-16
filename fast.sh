@@ -11,12 +11,12 @@ export PATH="/mnt/Hawai/toolchains/proton-clang-16/bin:$PATH"
 export USE_CCACHE=1
 export ARCH=arm64
 DTBIMAGE="dtb"
-export VARIANT="singularity-r01"
+export VARIANT="singularity-r02"
 export HASH=`git rev-parse --short=4 HEAD`
 export KERNEL_ZIP="$VARIANT-$HASH"
-export LOCALVERSION="~singularity-r01"
+export LOCALVERSION="~singularity-r02"
 make O=$KBUILD_OUTPUT CC=clang evo_defconfig
-make -j32 O=$KBUILD_OUTPUT CC=clang CROSS_COMPILE=/mnt/Hawai/toolchains/gcc-linaro-12.2.1-2023.01-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu- CROSS_COMPILE_ARM32=/mnt/Hawai/toolchains/gcc-linaro-12.2.1-2023.01_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
+make -j64 O=$KBUILD_OUTPUT CC=clang CROSS_COMPILE=/mnt/Hawai/toolchains/gcc-linaro-12.2.1-2023.01-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu- CROSS_COMPILE_ARM32=/mnt/Hawai/toolchains/gcc-linaro-12.2.1-2023.01_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
 cp -v $KBUILD_OUTPUT/arch/arm64/boot/Image $ZIP_DIR/Image
 cd $ZIP_DIR
 zip -r9 $VARIANT-$HASH.zip *
